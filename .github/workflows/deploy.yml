@@ -5,7 +5,27 @@ on:
       - main
 
 jobs:
+  security-scan: # <--- NOUVEAU JOB DE SÉCURITÉ
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Install Bandit (Security Scanner)
+        run: pip install bandit
+
+      - name: Run Security Scan
+        # Cela va vérifier si vous avez laissé des mots de passe en dur ou des failles
+        run: bandit -r app/ -f json -o security_report.json || true 
+      
+      - name: Upload Security Report
+        uses: actions/upload-artifact@v3
+        with:
+          name: security-report
+          path: security_report.json
+
   deploy:
+    needs: security-scan # Le déploiement attend que le scan soit fini
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
