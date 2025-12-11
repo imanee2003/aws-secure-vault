@@ -1,31 +1,38 @@
 name: Deploy to AWS Lambda
+
 on:
   push:
     branches:
       - main
 
 jobs:
-  security-scan: # <--- NOUVEAU JOB DE SÉCURITÉ
+  # ------------------------------
+  # JOB DE SÉCURITÉ
+  # ------------------------------
+  security-scan:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
       
       - name: Install Bandit (Security Scanner)
         run: pip install bandit
 
       - name: Run Security Scan
-        # Cela va vérifier si vous avez laissé des mots de passe en dur ou des failles
+        # Vérifie si des failles ou mots de passe en dur sont présents
         run: bandit -r app/ -f json -o security_report.json || true 
       
       - name: Upload Security Report
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: security-report
           path: security_report.json
 
+  # ------------------------------
+  # JOB DE DÉPLOIEMENT
+  # ------------------------------
   deploy:
-    needs: security-scan # Le déploiement attend que le scan soit fini
+    needs: security-scan # attend que le scan soit terminé
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
