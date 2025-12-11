@@ -1,0 +1,78 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Infrastructure SecureDocVault
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: securedocvault
+    Description: Nom du projet (minuscules uniquement)
+
+Resources:
+  # 1. Stockage (S3) avec Chiffrement
+  MySecureBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${ProjectName}-storage-${AWS::AccountId}" # Nom unique auto-généré
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  # 2. Base de Données (DynamoDB)
+  MyMetadataTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${ProjectName}-metadata"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: file_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: file_id
+          KeyType: HASH
+
+  # 3. Rôle de Sécurité pour la Lambda (IAM)
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
+
+  # 4. La fonction Lambda (Le Cerveau)
+  UploadFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-upload-logic"
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          import json
+          def lambda_handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps('Hello from CloudFormation!')
+              }
+      Runtime: python3.9
+      Timeout: 10
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref MySecureBucket
+          TABLE_NAME: !Ref MyMetadataTable
+
+Outputs:
+  BucketName:
+    Value: !Ref MySecureBucket
+  TableName:
+    Value: !Ref MyMetadataTable
+  LambdaName:
+    Value: !Ref UploadFunction
