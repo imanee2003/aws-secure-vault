@@ -1,9 +1,8 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Secure DevSecOps Vault - Infrastructure 100% Compliant
+Description: Secure DevSecOps Vault - Infrastructure 100% Compliant (Least Privilege)
 
 Resources:
-  # 1. NOUVEAU : La clé de sécurité Maître (KMS)
-  # C'est ce qui manquait pour chiffrer les variables d'environnement (Erreur CKV_AWS_173)
+  # 1. Clé KMS Maître
   SecureVaultKMSKey:
     Type: AWS::KMS::Key
     Properties:
@@ -20,18 +19,16 @@ Resources:
             Action: kms:*
             Resource: "*"
 
-  # 2. NOUVEAU : La file d'attente des erreurs (DLQ)
-  # C'est ce qui manquait pour gérer les pannes Lambda (Erreur CKV_AWS_116)
+  # 2. Dead Letter Queue
   SecureVaultDLQ:
     Type: AWS::SQS::Queue
     Properties:
       KmsMasterKeyId: !Ref SecureVaultKMSKey
 
-  # 3. VOTRE BUCKET EXISTANT (Sécurisé)
+  # 3. Bucket S3 Sécurisé
   MySecureBucket:
     Type: AWS::S3::Bucket
     Properties:
-      # On force le chiffrement avec la nouvelle clé KMS
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
@@ -44,12 +41,11 @@ Resources:
         RestrictPublicBuckets: true
       VersioningConfiguration:
         Status: Enabled
-      # Logging activé pour satisfaire les audits
       LoggingConfiguration:
         DestinationBucketName: !Ref S3LoggingBucket
         LogFilePrefix: access-logs/
 
-  # 4. Bucket séparé pour les logs (Best Practice SecOps)
+  # 4. Bucket de Logs (Séparé)
   S3LoggingBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -64,7 +60,7 @@ Resources:
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
 
-  # 5. VOTRE TABLE DYNAMODB (Sécurisée)
+  # 5. Table DynamoDB
   MyMetadataTable:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -76,7 +72,6 @@ Resources:
         - AttributeName: file_id
           KeyType: HASH
       BillingMode: PAY_PER_REQUEST
-      # Chiffrement KMS activé
       SSESpecification:
         SSEEnabled: true
         SSEType: KMS
@@ -84,7 +79,7 @@ Resources:
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: true
 
-  # 6. VOTRE ROLE IAM (Mis à jour avec permissions KMS)
+  # 6. Rôle IAM (CORRIGÉ : PLUS DE RESOURCE "*")
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -100,42 +95,55 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
+              # Permission S3 : Uniquement sur NOTRE bucket
               - Effect: Allow
                 Action:
                   - s3:PutObject
                   - s3:GetObject
+                Resource: 
+                  - !Sub "${MySecureBucket.Arn}/*"
+              
+              # Permission DynamoDB : Uniquement sur NOTRE table
+              - Effect: Allow
+                Action:
                   - dynamodb:PutItem
+                Resource: !GetAtt MyMetadataTable.Arn
+
+              # Permission KMS : Uniquement sur NOTRE clé
+              - Effect: Allow
+                Action:
                   - kms:Decrypt
                   - kms:GenerateDataKey
+                Resource: !GetAtt SecureVaultKMSKey.Arn
+
+              # Permission SQS : Uniquement sur NOTRE queue
+              - Effect: Allow
+                Action:
                   - sqs:SendMessage
-                Resource: "*"
+                Resource: !GetAtt SecureVaultDLQ.Arn
+
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
 
-  # 7. VOTRE LAMBDA (Sécurisée)
+  # 7. Fonction Lambda
   UploadFunction:
     Type: AWS::Lambda::Function
     Properties:
-      # On garde le nom que vous aviez pour ne pas perdre l'URL
       FunctionName: securedocvault-upload-logic
       Handler: lambda_function.lambda_handler
       Runtime: python3.11
       Role: !GetAtt LambdaExecutionRole.Arn
-      # CORRECTION CHECKOV : Chiffrer les variables d'environnement
       KmsKeyArn: !GetAtt SecureVaultKMSKey.Arn
       Environment:
         Variables:
           BUCKET_NAME: !Ref MySecureBucket
           TABLE_NAME: !Ref MyMetadataTable
       Code:
-        # Code temporaire pour permettre la mise à jour de l'infra
         ZipFile: |
           def lambda_handler(event, context):
-              return "Infrastructure Updated Successfully"
-      # CORRECTION CHECKOV : Ajouter la Dead Letter Queue
+              return "Infrastructure Logic Updated"
       DeadLetterConfig:
         TargetArn: !GetAtt SecureVaultDLQ.Arn
-      # CORRECTION CHECKOV : Limiter la concurrence
       ReservedConcurrentExecutions: 5
       TracingConfig:
         Mode: Active
