@@ -14,7 +14,7 @@ table = dynamodb.Table(TABLE_NAME)
 
 def lambda_handler(event, context):
     try:
-        # 1. Gestion flexible du body (Console vs API Gateway)
+        # 1. Gestion flexible du body (Console vs API Gateway
         if 'body' not in event:
              return {'statusCode': 400, 'body': 'Erreur: Body manquant'}
         
