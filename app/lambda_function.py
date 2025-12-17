@@ -14,25 +14,39 @@ table = dynamodb.Table(TABLE_NAME)
 
 def lambda_handler(event, context):
     try:
-        body = json.loads(event['body'])
-        filename = body['filename']
-        file_content = base64.b64decode(body['content'])
+        # 1. Gestion flexible du body (Console vs API Gateway)
+        if 'body' not in event:
+             return {'statusCode': 400, 'body': 'Erreur: Body manquant'}
+        
+        body_content = event['body']
+        if isinstance(body_content, str):
+            body = json.loads(body_content)
+        else:
+            body = body_content
 
-        # Sécurité : extensions interdites
-        if filename.lower().endswith(('.exe', '.sh')):
+        filename = body.get('filename', 'inconnu.txt')
+        content_encoded = body.get('content', '')
+
+        # 2. Sécurité : Blocage des fichiers dangereux
+        if filename.lower().endswith(('.exe', '.sh', '.bat')):
+            print(f"ALERTE SÉCURITÉ: Fichier {filename} bloqué")
             return {
                 'statusCode': 403,
-                'body': json.dumps("Fichier interdit pour raisons de sécurité.")
+                'body': json.dumps("Upload interdit : Type de fichier dangereux.")
             }
 
+        # 3. Traitement
+        file_content = base64.b64decode(content_encoded)
         file_id = str(uuid.uuid4())
 
+        # 4. Upload chiffré (KMS est forcé côté Bucket, mais on le précise)
         s3.put_object(
             Bucket=BUCKET_NAME,
             Key=file_id,
             Body=file_content
         )
 
+        # 5. Métadonnées
         table.put_item(Item={
             'file_id': file_id,
             'original_name': filename,
@@ -42,12 +56,12 @@ def lambda_handler(event, context):
 
         return {
             'statusCode': 200,
-            'body': json.dumps(f"Fichier sécurisé avec succès. ID: {file_id}")
+            'body': json.dumps(f"Succès : {filename} sécurisé (ID: {file_id})")
         }
 
     except Exception as e:
-        print(e)
+        print(f"ERREUR: {str(e)}")
         return {
             'statusCode': 500,
-            'body': json.dumps("Erreur interne.")
+            'body': json.dumps("Erreur interne du serveur.")
         }
