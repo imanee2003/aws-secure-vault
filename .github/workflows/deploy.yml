@@ -1,49 +1,52 @@
-name: Deploy to AWS Lambda
+name: Secure DevSecOps Pipeline
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
 
 jobs:
-  # ------------------------------
-  # JOB DE SÉCURITÉ
-  # ------------------------------
-  security-scan:
+  security:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-      
-      - name: Install Bandit (Security Scanner)
+      - uses: actions/checkout@v3
+
+      - name: Install Bandit
         run: pip install bandit
 
-      - name: Run Security Scan
-        # Vérifie si des failles ou mots de passe en dur sont présents
-        run: bandit -r app/ -f json -o security_report.json || true 
-      
-      - name: Upload Security Report
-        uses: actions/upload-artifact@v4
-        with:
-          name: security-report
-          path: security_report.json
+      - name: Run Bandit
+        run: bandit -r app/
 
-  # ------------------------------
-  # JOB DE DÉPLOIEMENT
-  # ------------------------------
+      - name: Install Checkov
+        run: pip install checkov
+
+      - name: Run Checkov
+        run: checkov -f infrastructure.yaml --framework cloudformation
+
+      - name: Install OPA
+        run: |
+          curl -L -o opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64
+          chmod +x opa
+          sudo mv opa /usr/local/bin/
+
+      - name: Run OPA policies
+        run: |
+          opa eval --fail-defined \
+          --input infrastructure.yaml \
+          --data policies/aws-security.rego \
+          "data.aws.security.deny"
+
   deploy:
-    needs: security-scan # attend que le scan soit terminé
+    needs: security
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
-      - name: Zip Lambda Function
+      - name: Package Lambda
         run: |
           cd app
           zip -r ../deployment_package.zip lambda_function.py
 
-      - name: Deploy to AWS Lambda
+      - name: Deploy Lambda
         uses: appleboy/lambda-action@master
         with:
           aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}

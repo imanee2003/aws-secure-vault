@@ -1,25 +1,28 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Infrastructure SecureDocVault
+Description: SecureDocVault - Secure Infrastructure
 
 Parameters:
   ProjectName:
     Type: String
     Default: securedocvault
-    Description: Nom du projet (minuscules uniquement)
 
 Resources:
-  # 1. Stockage (S3) avec Chiffrement
-  MySecureBucket:
+
+  SecureBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub "${ProjectName}-storage-${AWS::AccountId}" # Nom unique auto-généré
+      BucketName: !Sub "${ProjectName}-storage-${AWS::AccountId}"
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
 
-  # 2. Base de Données (DynamoDB)
-  MyMetadataTable:
+  MetadataTable:
     Type: AWS::DynamoDB::Table
     Properties:
       TableName: !Sub "${ProjectName}-metadata"
@@ -31,7 +34,6 @@ Resources:
         - AttributeName: file_id
           KeyType: HASH
 
-  # 3. Rôle de Sécurité pour la Lambda (IAM)
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -42,37 +44,47 @@ Resources:
             Principal:
               Service: lambda.amazonaws.com
             Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-        - arn:aws:iam::aws:policy/AmazonS3FullAccess
-        - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
+      Policies:
+        - PolicyName: LambdaLeastPrivilege
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub "${SecureBucket.Arn}/*"
 
-  # 4. La fonction Lambda (Le Cerveau)
+              - Effect: Allow
+                Action: dynamodb:PutItem
+                Resource: !GetAtt MetadataTable.Arn
+
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+
   UploadFunction:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: !Sub "${ProjectName}-upload-logic"
+      Runtime: python3.12
       Handler: lambda_function.lambda_handler
       Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 10
       Code:
         ZipFile: |
-          import json
           def lambda_handler(event, context):
-              return {
-                  'statusCode': 200,
-                  'body': json.dumps('Hello from CloudFormation!')
-              }
-      Runtime: python3.12
-      Timeout: 10
+              return {"statusCode": 200, "body": "OK"}
       Environment:
         Variables:
-          BUCKET_NAME: !Ref MySecureBucket
-          TABLE_NAME: !Ref MyMetadataTable
+          BUCKET_NAME: !Ref SecureBucket
+          TABLE_NAME: !Ref MetadataTable
 
 Outputs:
   BucketName:
-    Value: !Ref MySecureBucket
+    Value: !Ref SecureBucket
   TableName:
-    Value: !Ref MyMetadataTable
+    Value: !Ref MetadataTable
   LambdaName:
     Value: !Ref UploadFunction
