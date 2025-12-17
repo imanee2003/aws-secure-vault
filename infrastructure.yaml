@@ -1,9 +1,8 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Secure DevSecOps Pipeline - S3, DynamoDB, Lambda, IAM
+Description: Secure DevSecOps Vault Infrastructure
 
 Resources:
 
-  # Bucket S3 pour stockage sécurisé avec journalisation et blocage des accès publics
   S3LoggingBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -17,10 +16,11 @@ Resources:
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
       LoggingConfiguration:
-        DestinationBucketName: !Ref S3LoggingBucket  # peut être un bucket de logs séparé
+        DestinationBucketName: !Ref S3LoggingBucket
         LogFilePrefix: logs/
+      VersioningConfiguration:
+        Status: Enabled
 
-  # Exemple de table DynamoDB
   SecureVaultTable:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -34,24 +34,11 @@ Resources:
       BillingMode: PAY_PER_REQUEST
       SSESpecification:
         SSEEnabled: true
+        SSEType: KMS
+        KMSMasterKeyId: alias/aws/dynamodb
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
 
-  # Lambda Function exemple
-  SecureVaultLambda:
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: SecureVaultFunction
-      Handler: index.lambda_handler
-      Runtime: python3.11
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Environment:
-        Variables:
-          BUCKET_NAME: !Ref S3LoggingBucket
-          TABLE_NAME: !Ref SecureVaultTable
-      Code:
-        S3Bucket: my-lambda-code-bucket
-        S3Key: secure-vault.zip
-
-  # Role IAM pour Lambda
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -67,5 +54,26 @@ Resources:
               - sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-        - arn:aws:iam::aws:policy/AmazonS3FullAccess
-        - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
+
+  SecureVaultLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: SecureVaultFunction
+      Handler: index.lambda_handler
+      Runtime: python3.11
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref S3LoggingBucket
+          TABLE_NAME: !Ref SecureVaultTable
+      Code:
+        S3Bucket: my-lambda-code-bucket
+        S3Key: secure-vault.zip
+      VpcConfig:
+        SubnetIds:
+          - subnet-12345678
+        SecurityGroupIds:
+          - sg-12345678
+      DeadLetterConfig:
+        TargetArn: arn:aws:sqs:region:account-id:SecureVaultDLQ
+      ReservedConcurrentExecutions: 5
