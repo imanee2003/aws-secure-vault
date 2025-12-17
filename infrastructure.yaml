@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Secure DevSecOps Vault - Infrastructure 100% Compliant (Least Privilege)
+Description: Secure DevSecOps Vault - Infrastructure 100% Compliant
 
 Resources:
   # 1. Clé KMS Maître
@@ -46,12 +46,10 @@ Resources:
         LogFilePrefix: access-logs/
 
   # 4. Bucket de Logs (Séparé)
-  # checkov:skip=CKV_AWS_18:Le bucket de logs ne doit pas se loguer lui-même (boucle infinie)
   S3LoggingBucket:
     Type: AWS::S3::Bucket
     Properties:
       AccessControl: LogDeliveryWrite
-      # CORRECTION CHECKOV 21 : On active le versioning ici aussi
       VersioningConfiguration:
         Status: Enabled
       BucketEncryption:

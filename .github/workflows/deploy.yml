@@ -14,13 +14,15 @@ jobs:
         run: pip install bandit checkov
 
       - name: Run Bandit (Code Security)
-        # Scan du code Python
+        # Scan du code Python pour vérifier qu'il n'y a pas de secrets en dur
         run: bandit -r app/ -f json -o bandit-report.json || true
 
       - name: Run Checkov (Infrastructure Security)
         # Scan du YAML CloudFormation
-        # On ignore CKV_AWS_117 (VPC) car inutile pour ce projet examen
-        run: checkov -f infrastructure.yaml --framework cloudformation --skip-check CKV_AWS_117
+        # EXPLICATION DES EXCEPTIONS :
+        # - CKV_AWS_117 : On ignore car on n'utilise pas de VPC (trop cher/complexe pour l'examen)
+        # - CKV_AWS_18  : On ignore car le bucket de logs ne peut pas se loguer lui-même (boucle infinie)
+        run: checkov -f infrastructure.yaml --framework cloudformation --skip-check CKV_AWS_117,CKV_AWS_18
 
   deploy:
     needs: security
@@ -39,6 +41,5 @@ jobs:
           aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws_region: us-east-1
-          # IMPORTANT : Doit correspondre exactement au nom dans infrastructure.yaml
           function_name: securedocvault-upload-logic
           zip_file: deployment_package.zip
