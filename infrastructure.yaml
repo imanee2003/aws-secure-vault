@@ -45,10 +45,14 @@ Resources:
         DestinationBucketName: !Ref S3LoggingBucket
         LogFilePrefix: access-logs/
 
-  # 4. Bucket de Logs (Séparé)
+  # 4. Bucket de Logs (C'est ici que ça bloquait)
   S3LoggingBucket:
     Type: AWS::S3::Bucket
     Properties:
+      # CORRECTION ERREUR 400 : On réactive les ACLs pour permettre les logs
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerPreferred
       AccessControl: LogDeliveryWrite
       VersioningConfiguration:
         Status: Enabled
