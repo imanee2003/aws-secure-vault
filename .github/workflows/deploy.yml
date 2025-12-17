@@ -17,10 +17,7 @@ jobs:
         run: bandit -r app/ -f json -o bandit-report.json || true
 
       - name: Run Checkov (Infrastructure Security)
-        # SKIP LIST:
-        # CKV_AWS_117 : Pas de VPC (Trop cher/complexe)
-        # CKV_AWS_18  : Pas de logs sur le bucket de logs (Boucle infinie)
-        # CKV_AWS_115 : Pas de concurrence réservée (Limite compte AWS Étudiant)
+        # On ignore les règles comme avant
         run: checkov -f infrastructure.yaml --framework cloudformation --skip-check CKV_AWS_117,CKV_AWS_18,CKV_AWS_115
 
   deploy:
@@ -32,7 +29,7 @@ jobs:
       - name: Package Lambda
         run: |
           cd app
-          zip -r ../deployment_package.zip lambda_function.py
+          zip -r ../deployment_package.zip .
 
       - name: Deploy Lambda Code
         uses: appleboy/lambda-action@master
