@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Secure DevSecOps Vault - Infrastructure 100% Compliant
+Description: Secure DevSecOps Vault - Infrastructure Final
 
 Resources:
   # 1. Clé KMS Maître
@@ -25,7 +25,7 @@ Resources:
     Properties:
       KmsMasterKeyId: !Ref SecureVaultKMSKey
 
-  # 3. Bucket S3 Sécurisé (Données)
+  # 3. Bucket S3 Sécurisé
   MySecureBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -45,11 +45,10 @@ Resources:
         DestinationBucketName: !Ref S3LoggingBucket
         LogFilePrefix: access-logs/
 
-  # 4. Bucket de Logs (C'est ici que ça bloquait)
+  # 4. Bucket de Logs
   S3LoggingBucket:
     Type: AWS::S3::Bucket
     Properties:
-      # CORRECTION ERREUR 400 : On réactive les ACLs pour permettre les logs
       OwnershipControls:
         Rules:
           - ObjectOwnership: BucketOwnerPreferred
@@ -85,7 +84,7 @@ Resources:
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: true
 
-  # 6. Rôle IAM (Restreint)
+  # 6. Rôle IAM
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -123,7 +122,7 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
 
-  # 7. Fonction Lambda
+  # 7. Fonction Lambda (CORRIGÉE)
   UploadFunction:
     Type: AWS::Lambda::Function
     Properties:
@@ -142,7 +141,7 @@ Resources:
               return "Security Fixed"
       DeadLetterConfig:
         TargetArn: !GetAtt SecureVaultDLQ.Arn
-      ReservedConcurrentExecutions: 5
+      # SUPPRESSION de ReservedConcurrentExecutions pour éviter l'erreur AWS
       TracingConfig:
         Mode: Active
 
