@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: SecureDocVault - Secure Infrastructure
+Description: SecureDocVault - DevSecOps Compliant Infrastructure
 
 Parameters:
   ProjectName:
@@ -8,32 +8,96 @@ Parameters:
 
 Resources:
 
-  SecureBucket:
+  ##################################
+  # KMS KEY (CMK)
+  ##################################
+  AppKmsKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: CMK for SecureDocVault
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${AWS::AccountId}:root
+            Action: "kms:*"
+            Resource: "*"
+
+  ##################################
+  # S3 LOGGING BUCKET
+  ##################################
+  S3LoggingBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub "${ProjectName}-storage-${AWS::AccountId}"
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
+
+  ##################################
+  # SECURE S3 BUCKET
+  ##################################
+  SecureBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${ProjectName}-storage-${AWS::AccountId}"
+
+      VersioningConfiguration:
+        Status: Enabled
+
+      LoggingConfiguration:
+        DestinationBucketName: !Ref S3LoggingBucket
+        LogFilePrefix: access-logs/
+
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
 
+  ##################################
+  # DYNAMODB TABLE
+  ##################################
   MetadataTable:
     Type: AWS::DynamoDB::Table
     Properties:
       TableName: !Sub "${ProjectName}-metadata"
       BillingMode: PAY_PER_REQUEST
+
       AttributeDefinitions:
         - AttributeName: file_id
           AttributeType: S
+
       KeySchema:
         - AttributeName: file_id
           KeyType: HASH
 
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: KMS
+        KMSMasterKeyId: !Ref AppKmsKey
+
+  ##################################
+  # DLQ (SQS)
+  ##################################
+  LambdaDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      KmsMasterKeyId: !Ref AppKmsKey
+
+  ##################################
+  # IAM ROLE (LEAST PRIVILEGE)
+  ##################################
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -44,17 +108,20 @@ Resources:
             Principal:
               Service: lambda.amazonaws.com
             Action: sts:AssumeRole
+
       Policies:
         - PolicyName: LambdaLeastPrivilege
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
-                Action: s3:PutObject
+                Action:
+                  - s3:PutObject
                 Resource: !Sub "${SecureBucket.Arn}/*"
 
               - Effect: Allow
-                Action: dynamodb:PutItem
+                Action:
+                  - dynamodb:PutItem
                 Resource: !GetAtt MetadataTable.Arn
 
               - Effect: Allow
@@ -62,8 +129,37 @@ Resources:
                   - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:PutLogEvents
-                Resource: "*"
+                Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*
 
+              - Effect: Allow
+                Action:
+                  - kms:Encrypt
+                  - kms:Decrypt
+                Resource: !Ref AppKmsKey
+
+  ##################################
+  # VPC (MINIMAL)
+  ##################################
+  LambdaVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+
+  LambdaSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref LambdaVPC
+      CidrBlock: 10.0.1.0/24
+
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Lambda SG
+      VpcId: !Ref LambdaVPC
+
+  ##################################
+  # LAMBDA FUNCTION
+  ##################################
   UploadFunction:
     Type: AWS::Lambda::Function
     Properties:
@@ -72,10 +168,23 @@ Resources:
       Handler: lambda_function.lambda_handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Timeout: 10
+      ReservedConcurrentExecutions: 5
+      KmsKeyArn: !Ref AppKmsKey
+
+      DeadLetterConfig:
+        TargetArn: !GetAtt LambdaDLQ.Arn
+
+      VpcConfig:
+        SubnetIds:
+          - !Ref LambdaSubnet
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+
       Code:
         ZipFile: |
           def lambda_handler(event, context):
               return {"statusCode": 200, "body": "OK"}
+
       Environment:
         Variables:
           BUCKET_NAME: !Ref SecureBucket
