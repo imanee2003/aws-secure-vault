@@ -1,33 +1,9 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: SecureDocVault - DevSecOps Compliant Infrastructure
-
-Parameters:
-  ProjectName:
-    Type: String
-    Default: securedocvault
+Description: Secure DevSecOps Pipeline - S3, DynamoDB, Lambda, IAM
 
 Resources:
 
-  ##################################
-  # KMS KEY (CMK)
-  ##################################
-  AppKmsKey:
-    Type: AWS::KMS::Key
-    Properties:
-      Description: CMK for SecureDocVault
-      EnableKeyRotation: true
-      KeyPolicy:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              AWS: !Sub arn:aws:iam::${AWS::AccountId}:root
-            Action: "kms:*"
-            Resource: "*"
-
-  ##################################
-  # S3 LOGGING BUCKET
-  ##################################
+  # Bucket S3 pour stockage sécurisé avec journalisation et blocage des accès publics
   S3LoggingBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -35,165 +11,61 @@ Resources:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
-
-  ##################################
-  # SECURE S3 BUCKET
-  ##################################
-  SecureBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub "${ProjectName}-storage-${AWS::AccountId}"
-
-      VersioningConfiguration:
-        Status: Enabled
-
-      LoggingConfiguration:
-        DestinationBucketName: !Ref S3LoggingBucket
-        LogFilePrefix: access-logs/
-
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
-
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
+      LoggingConfiguration:
+        DestinationBucketName: !Ref S3LoggingBucket  # peut être un bucket de logs séparé
+        LogFilePrefix: logs/
 
-  ##################################
-  # DYNAMODB TABLE
-  ##################################
-  MetadataTable:
+  # Exemple de table DynamoDB
+  SecureVaultTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: !Sub "${ProjectName}-metadata"
-      BillingMode: PAY_PER_REQUEST
-
+      TableName: SecureVault
       AttributeDefinitions:
-        - AttributeName: file_id
+        - AttributeName: id
           AttributeType: S
-
       KeySchema:
-        - AttributeName: file_id
+        - AttributeName: id
           KeyType: HASH
-
-      PointInTimeRecoverySpecification:
-        PointInTimeRecoveryEnabled: true
-
+      BillingMode: PAY_PER_REQUEST
       SSESpecification:
         SSEEnabled: true
-        SSEType: KMS
-        KMSMasterKeyId: !Ref AppKmsKey
 
-  ##################################
-  # DLQ (SQS)
-  ##################################
-  LambdaDLQ:
-    Type: AWS::SQS::Queue
+  # Lambda Function exemple
+  SecureVaultLambda:
+    Type: AWS::Lambda::Function
     Properties:
-      KmsMasterKeyId: !Ref AppKmsKey
+      FunctionName: SecureVaultFunction
+      Handler: index.lambda_handler
+      Runtime: python3.11
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref S3LoggingBucket
+          TABLE_NAME: !Ref SecureVaultTable
+      Code:
+        S3Bucket: my-lambda-code-bucket
+        S3Key: secure-vault.zip
 
-  ##################################
-  # IAM ROLE (LEAST PRIVILEGE)
-  ##################################
+  # Role IAM pour Lambda
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
+      RoleName: SecureVaultLambdaRole
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
           - Effect: Allow
             Principal:
-              Service: lambda.amazonaws.com
-            Action: sts:AssumeRole
-
-      Policies:
-        - PolicyName: LambdaLeastPrivilege
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - s3:PutObject
-                Resource: !Sub "${SecureBucket.Arn}/*"
-
-              - Effect: Allow
-                Action:
-                  - dynamodb:PutItem
-                Resource: !GetAtt MetadataTable.Arn
-
-              - Effect: Allow
-                Action:
-                  - logs:CreateLogGroup
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-                Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*
-
-              - Effect: Allow
-                Action:
-                  - kms:Encrypt
-                  - kms:Decrypt
-                Resource: !Ref AppKmsKey
-
-  ##################################
-  # VPC (MINIMAL)
-  ##################################
-  LambdaVPC:
-    Type: AWS::EC2::VPC
-    Properties:
-      CidrBlock: 10.0.0.0/16
-
-  LambdaSubnet:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref LambdaVPC
-      CidrBlock: 10.0.1.0/24
-
-  LambdaSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Lambda SG
-      VpcId: !Ref LambdaVPC
-
-  ##################################
-  # LAMBDA FUNCTION
-  ##################################
-  UploadFunction:
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: !Sub "${ProjectName}-upload-logic"
-      Runtime: python3.12
-      Handler: lambda_function.lambda_handler
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Timeout: 10
-      ReservedConcurrentExecutions: 5
-      KmsKeyArn: !Ref AppKmsKey
-
-      DeadLetterConfig:
-        TargetArn: !GetAtt LambdaDLQ.Arn
-
-      VpcConfig:
-        SubnetIds:
-          - !Ref LambdaSubnet
-        SecurityGroupIds:
-          - !Ref LambdaSecurityGroup
-
-      Code:
-        ZipFile: |
-          def lambda_handler(event, context):
-              return {"statusCode": 200, "body": "OK"}
-
-      Environment:
-        Variables:
-          BUCKET_NAME: !Ref SecureBucket
-          TABLE_NAME: !Ref MetadataTable
-
-Outputs:
-  BucketName:
-    Value: !Ref SecureBucket
-  TableName:
-    Value: !Ref MetadataTable
-  LambdaName:
-    Value: !Ref UploadFunction
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
