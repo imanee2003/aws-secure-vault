@@ -25,7 +25,7 @@ Resources:
     Properties:
       KmsMasterKeyId: !Ref SecureVaultKMSKey
 
-  # 3. Bucket S3 Sécurisé
+  # 3. Bucket S3 Sécurisé (Données)
   MySecureBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -46,10 +46,14 @@ Resources:
         LogFilePrefix: access-logs/
 
   # 4. Bucket de Logs (Séparé)
+  # checkov:skip=CKV_AWS_18:Le bucket de logs ne doit pas se loguer lui-même (boucle infinie)
   S3LoggingBucket:
     Type: AWS::S3::Bucket
     Properties:
       AccessControl: LogDeliveryWrite
+      # CORRECTION CHECKOV 21 : On active le versioning ici aussi
+      VersioningConfiguration:
+        Status: Enabled
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
@@ -79,7 +83,7 @@ Resources:
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: true
 
-  # 6. Rôle IAM (CORRIGÉ : PLUS DE RESOURCE "*")
+  # 6. Rôle IAM (Restreint)
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -95,33 +99,25 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              # Permission S3 : Uniquement sur NOTRE bucket
               - Effect: Allow
                 Action:
                   - s3:PutObject
                   - s3:GetObject
                 Resource: 
                   - !Sub "${MySecureBucket.Arn}/*"
-              
-              # Permission DynamoDB : Uniquement sur NOTRE table
               - Effect: Allow
                 Action:
                   - dynamodb:PutItem
                 Resource: !GetAtt MyMetadataTable.Arn
-
-              # Permission KMS : Uniquement sur NOTRE clé
               - Effect: Allow
                 Action:
                   - kms:Decrypt
                   - kms:GenerateDataKey
                 Resource: !GetAtt SecureVaultKMSKey.Arn
-
-              # Permission SQS : Uniquement sur NOTRE queue
               - Effect: Allow
                 Action:
                   - sqs:SendMessage
                 Resource: !GetAtt SecureVaultDLQ.Arn
-
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
 
@@ -141,7 +137,7 @@ Resources:
       Code:
         ZipFile: |
           def lambda_handler(event, context):
-              return "Infrastructure Logic Updated"
+              return "Security Fixed"
       DeadLetterConfig:
         TargetArn: !GetAtt SecureVaultDLQ.Arn
       ReservedConcurrentExecutions: 5
